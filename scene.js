@@ -11,6 +11,19 @@ export function createScene(engine, canvas) {
     // This attaches the camera to the canvas
     camera.attachControl(canvas, true);
 
+    // Make sure the canvas has focus to receive key events
+canvas.tabIndex = 1;
+canvas.focus();
+
+// WASD + arrows
+camera.keysUp = [87, 38];     // W / ↑
+camera.keysDown = [83, 40];   // S / ↓
+camera.keysLeft = [65, 37];   // A / ←
+camera.keysRight = [68, 39];  // D / →
+camera.speed = 1.0;           // movement speed (units per frame)
+camera.inertia = 0.7;         // lower = snappier stops
+
+
     // This creates a light, aiming 0,1,0 - to the sky (non-mesh)
     var light = new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0, 1, 0), scene);
 
@@ -54,10 +67,10 @@ void main(void) {
   float z = position.z;
 
   float y;
-  if (-2.0 <= x && x <= 2.0){
-      float xSlope = cos(x) / 2.0;
-      float zSlope = cos(z*2.0) / 2.0;
-      y = xSlope + zSlope;
+  if (2.0 <= x && x <= 4.0){
+      float xSlope = cos(x-2.0) / 2.0;
+      float zSlope = cos(z-2.0)/2.0 - 0.25;
+      y = max(angleOfSlop*-position.x-amountShorelineVisible, xSlope + zSlope);
   } else {
       y = angleOfSlop*-position.x-amountShorelineVisible;
   }
@@ -72,11 +85,11 @@ precision highp float;
 varying float vH;
 void main(void) {
   // Simple height-based color (greens for sand/shallows)
-  float t = clamp(vH * 0.1 + 0.5, 0.0, 1.0);
-  vec3 shallow = vec3(0.85, 0.78, 0.55);
-  vec3 deep    = vec3(0.15, 0.35, 0.55);
-  vec3 col = mix(deep, shallow, t);
-  gl_FragColor = vec4(col, 1.0);
+//   float t = clamp(vH * 0.1 + 0.5, 0.0, 1.0);
+//   vec3 shallow = vec3(0.85, 0.78, 0.55);
+//   vec3 deep    = vec3(0.15, 0.35, 0.55);
+//   vec3 col = mix(deep, shallow, t);
+//   gl_FragColor = vec4(col, 1.0);
 }
 `;
 
