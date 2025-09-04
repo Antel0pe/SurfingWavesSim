@@ -59,22 +59,29 @@ uniform float uPeriod;    // spacing along X (world units)
 uniform float uSharpness; // >=1, higher => sharper crests
 
 varying float vH; // pass height to fragment for simple coloring
+varying float sandAtollHeight;
 const float angleOfSlop = 0.1;
 const float amountShorelineVisible = 0.25;
 
 void main(void) {
   float x = position.x;
   float z = position.z;
+    float defaultHeight = angleOfSlop*-x-amountShorelineVisible;
 
   float y;
   if (2.0 <= x && x <= 4.0){
-      float xSlope = cos(x-2.0) / 2.0;
-      float zSlope = cos(z-2.0)/2.0 - 0.25;
-      y = max(angleOfSlop*-position.x-amountShorelineVisible, xSlope + zSlope);
+      float xSlope = cos((x-3.0));
+      float zSlope = cos((z-3.0));
+      float calculatedAtollHeight = xSlope + zSlope - 2.0;
+
+      y = max(defaultHeight, calculatedAtollHeight);
+      sandAtollHeight = max(0.0, calculatedAtollHeight - defaultHeight);
   } else {
-      y = angleOfSlop*-position.x-amountShorelineVisible;
+      y = defaultHeight;
+    sandAtollHeight = 0.0;
   }
 
+  vH = y;
     vec4 p = vec4(position.x, y, position.z, 1.0);
   gl_Position = worldViewProjection * p;
 }
@@ -83,13 +90,20 @@ void main(void) {
     BABYLON.Effect.ShadersStore["beachFragmentShader"] = `
 precision highp float;
 varying float vH;
+varying float sandAtollHeight;
 void main(void) {
-  // Simple height-based color (greens for sand/shallows)
-//   float t = clamp(vH * 0.1 + 0.5, 0.0, 1.0);
-//   vec3 shallow = vec3(0.85, 0.78, 0.55);
-//   vec3 deep    = vec3(0.15, 0.35, 0.55);
-//   vec3 col = mix(deep, shallow, t);
-//   gl_FragColor = vec4(col, 1.0);
+if (sandAtollHeight > 0.0) {
+    // Hump color
+    gl_FragColor = vec4(0.8, 0.65, 0.38, 1.0);
+}
+else if (vH > 0.0) {
+    // Beach color
+    gl_FragColor = vec4(0.9, 0.8, 0.5, 1.0);
+}
+else {
+    // Water color
+    gl_FragColor = vec4(0.45, 0.31, 1.0, 1.0);
+}
 }
 `;
 
