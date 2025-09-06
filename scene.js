@@ -19,7 +19,10 @@ canvas.focus();
 camera.keysUp = [87, 38];     // W / ↑
 camera.keysDown = [83, 40];   // S / ↓
 camera.keysLeft = [65, 37];   // A / ←
-camera.keysRight = [68, 39];  // D / →
+    camera.keysRight = [68, 39];  // D / →
+    camera.keysUpward = [32];   // space bar
+camera.keysDownward = [16]; // shift
+
 camera.speed = 1.0;           // movement speed (units per frame)
 camera.inertia = 0.7;         // lower = snappier stops
 
@@ -29,14 +32,6 @@ camera.inertia = 0.7;         // lower = snappier stops
 
     // Default intensity is 1. Let's dim the light a small amount
     light.intensity = 0.7;
-
-
-    // --- Denser ground so vertex displacement has detail ---
-    // var ground = BABYLON.MeshBuilder.CreateGround(
-        // "ground",
-        // { width: 10, height: 10, subdivisionsX: 200, subdivisionsY: 300 },
-        // scene
-    // );
 // --- 1) Domain mapping (world <-> texture) ---
 // Match the ground you plan to render. If you CreateGround({width:10,height:10}) the x/z range is [-5..+5].
 const DOMAIN = {
@@ -61,35 +56,15 @@ const heightRTT = new BABYLON.RenderTargetTexture(
   { width: heightSize, height: heightSize },
     scene,
   
-//   false,                                  // generateMipMaps
-//   true,                                   // doNotChangeAspectRatio
-//   BABYLON.Constants.TEXTURETYPE_FLOAT,    // use 32F if available; Babylon will fall back to 16F if needed
-//   false,                                  // isCube
-//   BABYLON.Constants.TEXTUREFORMAT_RED,    // store only height in R if supported (engine may promote to RGBA)
-//   true                                    // noColorAttachment? (false keeps color; true avoids depth)
+  false,                                  // generateMipMaps
+  true,                                   // doNotChangeAspectRatio
+  BABYLON.Constants.TEXTURETYPE_FLOAT,    // use 32F if available; Babylon will fall back to 16F if needed
+  false,                                  // isCube
+  BABYLON.Constants.TEXTUREFORMAT_RED,    // store only height in R if supported (engine may promote to RGBA)
+  true                                    // noColorAttachment? (false keeps color; true avoids depth)
 );
 heightRTT.wrapU = heightRTT.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
     heightRTT.refreshRate = 1; // we'll bake once, on demand
-    
-
-// bakeQuad.setEnabled(true);
-
-// heightRTT.onAfterUnbindObservable.addOnce(() => {
-//   console.log("height baked");
-
-//   // 2) now bind it to the ground material
-//   groundMat.setTexture("heightTex", heightRTT);
-
-//   // optional: show it on a debug plane to verify visually
-//   debugMat.diffuseTexture = heightRTT;
-
-//   // 3) freeze the RTT so it stops re-rendering (keeps its contents)
-//   heightRTT.refreshRate = 0;
-//   // don't disable the quad until AFTER the RTT has a frame in it
-//   bakeQuad.setEnabled(false);
-// });
-
-
 
 // --- 3) Tiny offscreen quad + ortho camera to "draw" into the RTT ---
 const bakeQuad = BABYLON.MeshBuilder.CreatePlane("bakeQuad", { size: 2 }, scene);
@@ -154,7 +129,7 @@ void main() {
   }
 
   // Store in RED channel. If GPU promotes to RGBA, other channels are don't-care.
-  gl_FragColor = vec4(y, 0.0, 0.0, 1.0);
+  gl_FragColor = vec4(y, defaultHeight, 0.0, 1.0);
 }
 `;
 
@@ -219,9 +194,10 @@ varying float sandAtollHeight; // keep for your color logic if you want
 void main() {
   // Sample baked height at this vertex's UV
   float y = texture2D(heightTex, uv).r;
+  float defaultHeight = texture2D(heightTex, uv).g;
 
   // (Optional) Recompute sandAtollHeight-style mask if you still need it, otherwise set 0.
-  sandAtollHeight = 0.0;
+  sandAtollHeight = y - defaultHeight;
 
   vH = y;
   gl_Position = worldViewProjection * vec4(position.x, y, position.z, 1.0);
@@ -262,11 +238,6 @@ const groundMat = new BABYLON.ShaderMaterial(
   }
     );
     
-    // heightRTT.readPixels().then(data => {
-//   console.log("Raw height pixels:", data);
-// });
-
-
 // Bind the RTT as the height sampler
 groundMat.setTexture("heightTex", heightRTT);
 groundMat.setFloat("minX", DOMAIN.minX);
@@ -277,33 +248,6 @@ groundMat.setFloat("maxZ", DOMAIN.maxZ);
 ground.material = groundMat;
 
 
-
-    // var mat = new BABYLON.ShaderMaterial(
-    //     "beachMat",
-    //     scene,
-    //     { vertex: "beach", fragment: "beach" },
-    //     {
-    //         attributes: ["position", "uv"],
-    //         uniforms: [
-    //             "worldViewProjection",
-    //             "uSlope", "uOffset",
-    //             "uBandCenterZ", "uBandWidth",
-    //             "uAmp", "uPeriod", "uSharpness"
-    //         ]
-    //     }
-    // );
-
-    // Set some sensible first-pass params (tweak live)
-    // mat.setFloat("uSlope", 0.05);        // drop 0.05 units per Z unit
-    // mat.setFloat("uOffset", 1.0);        // lift nearshore a bit
-    // mat.setFloat("uBandCenterZ", 0.0);   // band centered near mesh middle (Z=0)
-    // mat.setFloat("uBandWidth", 8.0);     // half-width of the band
-    // mat.setFloat("uAmp", 0.6);           // bar amplitude
-    // mat.setFloat("uPeriod", 6.0);        // along-shore spacing
-    // mat.setFloat("uSharpness", 1.8);     // 1 = pure cosine, higher = sharper
-
-    // ground.material = groundMat;
-
     // Optional: put a "waterline" at Y=0 so the slope reads
     var water = BABYLON.MeshBuilder.CreateGround("water", { width: 40, height: 60 }, scene);
     water.position.y = 0.0;
@@ -313,5 +257,162 @@ ground.material = groundMat;
     wmat.backFaceCulling = false;
     water.material = wmat;
 
+    particles(scene);
+
+    
+
     return scene;
 };
+
+function particles(scene) {
+  // --- allocate two float RTTs for positions ---
+  const SIZE = 10, COUNT = SIZE * SIZE;
+
+  function makeFloatRTT(name) {
+    const rtt = new BABYLON.RenderTargetTexture(
+      name,
+      { width: SIZE, height: SIZE },
+      scene,
+      false,
+      true,
+      BABYLON.Constants.TEXTURETYPE_FLOAT
+    );
+    rtt.refreshRate = 0;
+    // clamp + nearest so we never interpolate positions between texels
+    rtt.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
+    rtt.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+    rtt.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
+    return rtt;
+  }
+
+  let posA = makeFloatRTT("posA"), posB = makeFloatRTT("posB");
+  scene.customRenderTargets.push(posA, posB);
+
+  // --- init & update passes via EffectRenderer ---
+  const fxr = new BABYLON.EffectRenderer(scene.getEngine());
+
+  // Init shader: write positions at texel centers (z = 0)
+  const initFx = new BABYLON.EffectWrapper({
+    engine: scene.getEngine(),
+    name: "init",
+    fragmentShader: `
+precision highp float;
+varying vec2 vUV;
+void main(){
+  vec2 p = vUV * 2.0 - 1.0;   // clip-ish xy in [-1,1]
+  float z = 0.0;
+  gl_FragColor = vec4(vUV, z, 1.0);
+}`
+  });
+
+  fxr.render(initFx, posA);
+  fxr.render(initFx, posB);
+
+  // Advect (update) shader: sample read texture at texel centers
+  const advectFx = new BABYLON.EffectWrapper({
+    engine: scene.getEngine(),
+    name: "advect",
+    fragmentShader: `
+precision highp float;
+varying vec2 vUV;
+uniform sampler2D posTex;
+uniform float dt;
+uniform float texSize;
+
+vec2 snapToCenter(vec2 uv, float N){
+  vec2 ij = floor(uv * N);
+  return (ij + 0.5) / N;
+}
+
+void main(){
+  vec2 uv = snapToCenter(vUV, texSize);
+  vec3 p  = texture2D(posTex, uv).xyz;
+
+
+  gl_FragColor = vec4(p, 1.0);
+}`,
+    samplerNames: ["posTex"],
+    uniformNames: ["dt", "texSize"]
+  });
+
+    // --- render: thin instances that sample pos texture in VS ---
+    const sprite = BABYLON.MeshBuilder.CreatePlane("sprite", { size: 1 }, scene);
+
+    // identity matrices for thin instances
+    const matrices = new Float32Array(COUNT * 16);
+    for (let i = 0; i < COUNT; i++) {
+        const o = i * 16;
+        matrices[o] = matrices[o + 5] = matrices[o + 10] = matrices[o + 15] = 1;
+    }
+    sprite.thinInstanceSetBuffer("matrix", matrices, 16);
+
+    // per-instance particle index 0..COUNT-1
+    const idx = new Float32Array(COUNT);
+    for (let i = 0; i < COUNT; i++) idx[i] = i;
+    sprite.thinInstanceSetBuffer("instanceParticleIndex", idx, 1);
+
+  // draw shaders: index -> (x,y) -> texel center UV -> sample posTex
+  BABYLON.Effect.ShadersStore["drawParticlesVertexShader"] = `
+precision highp float;
+attribute vec3 position;
+attribute float instanceParticleIndex;
+uniform mat4 worldViewProjection;
+uniform sampler2D posTex;
+uniform float texSize;
+varying vec2 uvL;
+
+vec2 idToUV(float id, float N){
+  float x = mod(id, N);
+  float y = floor(id / N);
+  return (vec2(x, y) + 0.5) / N;   // texel center
+}
+
+void main(){
+  vec2 uv = idToUV(float(gl_InstanceID) , texSize);
+  uvL = uv;
+    vec3 center = texture2D(posTex, uv).xyz;
+  vec3 worldPos = center + vec3(position.xy * 2.5, position.y);
+  gl_Position = worldViewProjection * vec4(uv,0.0, 1.0);
+}`;
+  BABYLON.Effect.ShadersStore["drawParticlesPixelShader"] = `
+precision highp float;
+varying vec2 uvL;
+void main(){
+gl_FragColor = vec4(uvL, 0.0, 1.0);
+}`;
+
+  const mat = new BABYLON.ShaderMaterial(
+    "draw",
+    scene,
+    { vertex: "drawParticles", fragment: "drawParticles" },
+    {
+      attributes: ["position", "instanceParticleIndex"],
+      uniforms: ["worldViewProjection", "texSize"],
+      samplers: ["posTex"]
+    }
+  );
+  mat.setFloat("texSize", SIZE);
+  mat.setTexture("posTex", posA);
+  mat.backFaceCulling = false;
+  sprite.material = mat;
+
+  // --- ping-pong loop ---
+  let read = posA, write = posB;
+
+  scene.onBeforeRenderObservable.add(() => {
+    const dt = scene.getEngine().getDeltaTime() * 0.001;
+
+    advectFx.onApply = (e) => {
+      e.setFloat("dt", dt);
+      e.setFloat("texSize", SIZE);
+      e.setTexture("posTex", read);
+    };
+    fxr.render(advectFx, write);
+
+    // swap
+    const tmp = read; read = write; write = tmp;
+
+    // ensure the draw material samples the latest positions
+    mat.setTexture("posTex", read);
+  });
+}
