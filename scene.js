@@ -257,134 +257,140 @@ ground.material = groundMat;
     wmat.backFaceCulling = false;
     water.material = wmat;
 
-    particles(scene);
-
+    // particles(scene);
+    simpleParticles(scene);
     
 
     return scene;
 };
+function simpleParticles(scene) {
+  const SIZE = 10; // 10x10 grid
 
-function particles(scene) {
-  // --- allocate two float RTTs for positions ---
-  const SIZE = 10, COUNT = SIZE * SIZE;
-
-  function makeFloatRTT(name) {
-    const rtt = new BABYLON.RenderTargetTexture(
+  // --- Create two RTTs ---
+  function makeRTT(name) {
+    const tex = new BABYLON.RenderTargetTexture(
       name,
       { width: SIZE, height: SIZE },
       scene,
-      false,
-      true,
+      false, true,
       BABYLON.Constants.TEXTURETYPE_FLOAT
     );
-    rtt.refreshRate = 0;
-    // clamp + nearest so we never interpolate positions between texels
-    rtt.wrapU = BABYLON.Texture.CLAMP_ADDRESSMODE;
-    rtt.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
-    rtt.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
-    return rtt;
+    tex.wrapU = tex.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
+    tex.updateSamplingMode(BABYLON.Texture.NEAREST_SAMPLINGMODE);
+    tex.refreshRate = 0; // no auto updates
+    return tex;
   }
 
-  let posA = makeFloatRTT("posA"), posB = makeFloatRTT("posB");
-  scene.customRenderTargets.push(posA, posB);
+  let posA = makeRTT("posA");
+  let posB = makeRTT("posB");
 
-  // --- init & update passes via EffectRenderer ---
   const fxr = new BABYLON.EffectRenderer(scene.getEngine());
 
-  // Init shader: write positions at texel centers (z = 0)
+  // --- Init shader ---
   const initFx = new BABYLON.EffectWrapper({
     engine: scene.getEngine(),
-    name: "init",
+    name: "initPos",
+    vertexShader: `
+      precision highp float;
+      attribute vec2 position;
+      varying vec2 vUV;
+      void main() {
+        vUV = (position + 1.0) * 0.5;
+        gl_Position = vec4(position, 0.0, 1.0);
+      }
+    `,
     fragmentShader: `
-precision highp float;
-varying vec2 vUV;
-void main(){
-  vec2 p = vUV * 2.0 - 1.0;   // clip-ish xy in [-1,1]
-  float z = 0.0;
-  gl_FragColor = vec4(vUV, z, 1.0);
-}`
+      precision highp float;
+      varying vec2 vUV;
+      void main() {
+        float gx = floor(vUV.x * 10.0);
+        float gy = floor(vUV.y * 10.0);
+        float x = gx - 5.0;
+        float y = 1.0;
+        float z = gy - 5.0;
+        gl_FragColor = vec4(x, y, z, 1.0);
+      }
+    `
   });
 
   fxr.render(initFx, posA);
-  fxr.render(initFx, posB);
 
-  // Advect (update) shader: sample read texture at texel centers
-  const advectFx = new BABYLON.EffectWrapper({
+    // --- Copy shader ---
+  const copyFx = new BABYLON.EffectWrapper({
     engine: scene.getEngine(),
-    name: "advect",
+    name: "copy",
+    vertexShader: `
+      precision highp float;
+      attribute vec2 position;
+      varying vec2 vUV;
+      void main() {
+        vUV = (position + 1.0) * 0.5;
+        gl_Position = vec4(position, 0.0, 1.0);
+      }
+    `,
     fragmentShader: `
-precision highp float;
-varying vec2 vUV;
-uniform sampler2D posTex;
-uniform float dt;
-uniform float texSize;
-
-vec2 snapToCenter(vec2 uv, float N){
-  vec2 ij = floor(uv * N);
-  return (ij + 0.5) / N;
-}
-
-void main(){
-  vec2 uv = snapToCenter(vUV, texSize);
-  vec3 p  = texture2D(posTex, uv).xyz;
-
-
-  gl_FragColor = vec4(p, 1.0);
-}`,
-    samplerNames: ["posTex"],
-    uniformNames: ["dt", "texSize"]
+      precision highp float;
+      varying vec2 vUV;
+      uniform sampler2D srcTex;
+      void main() {
+        vec4 val = texture2D(srcTex, vUV);
+        gl_FragColor = vec4(val.x + 0.01, val.y, val.z, 1.0);
+      }
+    `,
+    samplerNames: ["srcTex"]
   });
 
-    // --- render: thin instances that sample pos texture in VS ---
-    const sprite = BABYLON.MeshBuilder.CreatePlane("sprite", { size: 1 }, scene);
+  // --- Particle shaders ---
+  BABYLON.Effect.ShadersStore["particlesVertexShader"] = `
+    precision highp float;
+    attribute vec3 position;
+    attribute float instanceParticleIndex;
 
-    // identity matrices for thin instances
-    const matrices = new Float32Array(COUNT * 16);
-    for (let i = 0; i < COUNT; i++) {
-        const o = i * 16;
-        matrices[o] = matrices[o + 5] = matrices[o + 10] = matrices[o + 15] = 1;
+    uniform mat4 worldViewProjection;
+    uniform sampler2D posTex;
+    uniform float texSize;
+
+    vec2 idToUV(float id, float N) {
+      float x = mod(id, N);
+      float y = floor(id / N);
+      return (vec2(x, y) + 0.5) / N;
     }
-    sprite.thinInstanceSetBuffer("matrix", matrices, 16);
 
-    // per-instance particle index 0..COUNT-1
-    const idx = new Float32Array(COUNT);
-    for (let i = 0; i < COUNT; i++) idx[i] = i;
-    sprite.thinInstanceSetBuffer("instanceParticleIndex", idx, 1);
+    void main() {
+      vec2 uv = idToUV(instanceParticleIndex, texSize);
+      vec3 worldPos = texture2D(posTex, uv).xyz;
+      gl_Position = worldViewProjection * vec4(worldPos + position * 0.1, 1.0);
+    }
+  `;
 
-  // draw shaders: index -> (x,y) -> texel center UV -> sample posTex
-  BABYLON.Effect.ShadersStore["drawParticlesVertexShader"] = `
-precision highp float;
-attribute vec3 position;
-attribute float instanceParticleIndex;
-uniform mat4 worldViewProjection;
-uniform sampler2D posTex;
-uniform float texSize;
-varying vec2 uvL;
+  BABYLON.Effect.ShadersStore["particlesFragmentShader"] = `
+    precision highp float;
+    void main() {
+      gl_FragColor = vec4(0.0, 1.0, 0.0, 1.0);
+    }
+  `;
 
-vec2 idToUV(float id, float N){
-  float x = mod(id, N);
-  float y = floor(id / N);
-  return (vec2(x, y) + 0.5) / N;   // texel center
-}
+  // --- Mesh setup ---
+  const sprite = BABYLON.MeshBuilder.CreateSphere("sprite", { diameter: 1 }, scene);
 
-void main(){
-  vec2 uv = idToUV(float(gl_InstanceID) , texSize);
-  uvL = uv;
-    vec3 center = texture2D(posTex, uv).xyz;
-  vec3 worldPos = center + vec3(position.xy * 2.5, position.y);
-  gl_Position = worldViewProjection * vec4(uv,0.0, 1.0);
-}`;
-  BABYLON.Effect.ShadersStore["drawParticlesPixelShader"] = `
-precision highp float;
-varying vec2 uvL;
-void main(){
-gl_FragColor = vec4(uvL, 0.0, 1.0);
-}`;
+  // identity matrices
+  const matrices = new Float32Array(100 * 16);
+  for (let i = 0; i < 100; i++) {
+    const o = i * 16;
+    matrices[o] = matrices[o+5] = matrices[o+10] = matrices[o+15] = 1;
+  }
+  sprite.thinInstanceSetBuffer("matrix", matrices, 16);
 
+  // index buffer
+  const idx = new Float32Array(100);
+  for (let i = 0; i < 100; i++) idx[i] = i;
+  sprite.thinInstanceSetBuffer("instanceParticleIndex", idx, 1);
+
+  // shader material
   const mat = new BABYLON.ShaderMaterial(
-    "draw",
+    "particlesMat",
     scene,
-    { vertex: "drawParticles", fragment: "drawParticles" },
+    { vertex: "particles", fragment: "particles" },
     {
       attributes: ["position", "instanceParticleIndex"],
       uniforms: ["worldViewProjection", "texSize"],
@@ -392,27 +398,30 @@ gl_FragColor = vec4(uvL, 0.0, 1.0);
     }
   );
   mat.setFloat("texSize", SIZE);
-  mat.setTexture("posTex", posA);
-  mat.backFaceCulling = false;
   sprite.material = mat;
 
-  // --- ping-pong loop ---
-  let read = posA, write = posB;
+  sprite.thinInstanceBufferUpdated("matrix");
+  sprite.thinInstanceBufferUpdated("instanceParticleIndex");
 
-  scene.onBeforeRenderObservable.add(() => {
-    const dt = scene.getEngine().getDeltaTime() * 0.001;
+  // --- Ping-pong loop ---
+  let readTex  = posA; // scene samples this
+  let writeTex = posB; // compute writes here
 
-    advectFx.onApply = (e) => {
-      e.setFloat("dt", dt);
-      e.setFloat("texSize", SIZE);
-      e.setTexture("posTex", read);
-    };
-    fxr.render(advectFx, write);
+  mat.setTexture("posTex", readTex); // initial bind
 
-    // swap
-    const tmp = read; read = write; write = tmp;
+scene.onBeforeRenderObservable.add(() => {
+  copyFx.onApply = (effect) => effect.setTexture("srcTex", readTex);
+  fxr.render(copyFx, writeTex);
+});
 
-    // ensure the draw material samples the latest positions
-    mat.setTexture("posTex", read);
-  });
+scene.onAfterRenderObservable.add(() => {
+    // 3) swap so next frame reads what we just wrote
+    const tmp = readTex;
+    readTex = writeTex;
+    writeTex = tmp;
+
+    // binding the scene to render the writeTex for next frame
+    mat.setTexture("posTex", writeTex);
+});
+
 }
