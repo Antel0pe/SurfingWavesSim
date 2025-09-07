@@ -264,13 +264,15 @@ ground.material = groundMat;
     return scene;
 };
 function simpleParticles(scene) {
-  const SIZE = 10; // 10x10 grid
+  const TEX_SIZE = 32; // 10x10 grid 
+    const GRID = 10;                   // 10 x 10 x 10
+  const COUNT = GRID * GRID * GRID; // 1000
 
   // --- Create two RTTs ---
   function makeRTT(name) {
     const tex = new BABYLON.RenderTargetTexture(
       name,
-      { width: SIZE, height: SIZE },
+      { width: TEX_SIZE, height: TEX_SIZE },
       scene,
       false, true,
       BABYLON.Constants.TEXTURETYPE_FLOAT
@@ -302,16 +304,40 @@ function simpleParticles(scene) {
     fragmentShader: `
       precision highp float;
       varying vec2 vUV;
+      uniform float texSize; 
+      uniform float grid;    
+
       void main() {
-        float gx = floor(vUV.x * 10.0);
-        float gy = floor(vUV.y * 10.0);
-        float x = gx - 5.0;
-        float y = 1.0;
-        float z = gy - 5.0;
-        gl_FragColor = vec4(x, y, z, 1.0);
+        // linear texel id in [0 .. texSize*texSize-1]
+        vec2 ij = floor(vUV * texSize);
+        float id = ij.x + ij.y * texSize;
+
+        float G = grid;
+        float plane = G * G;
+
+        // id -> (x,y,z) in [0..G-1]
+        float z = floor(id / plane);
+        float rem = id - z * plane;
+        float y = floor(rem / G);
+        float yNorm = y / (G - 1.0);
+        float yScaled = yNorm * 2.0 + 2.5;
+        float x = rem - y * G;
+
+        // center the cube around origin; spacing = 1.0
+        vec3 p = vec3(x, yScaled, z) - vec3((G - 1.0) * 0.5);
+
+        gl_FragColor = vec4(p, 1.0);
       }
-    `
+    `,
+    uniformNames: ["texSize", "grid"]
   });
+    
+initFx.onApplyObservable.add(() => {
+  const e = initFx.effect;
+  e.setFloat("texSize", 32.0);
+  e.setFloat("grid", 10.0);
+});
+    
 
   fxr.render(initFx, posA);
 
@@ -374,16 +400,16 @@ function simpleParticles(scene) {
   const sprite = BABYLON.MeshBuilder.CreateSphere("sprite", { diameter: 1 }, scene);
 
   // identity matrices
-  const matrices = new Float32Array(100 * 16);
-  for (let i = 0; i < 100; i++) {
+  const matrices = new Float32Array(COUNT * 16);
+  for (let i = 0; i < COUNT; i++) {
     const o = i * 16;
     matrices[o] = matrices[o+5] = matrices[o+10] = matrices[o+15] = 1;
   }
   sprite.thinInstanceSetBuffer("matrix", matrices, 16);
 
   // index buffer
-  const idx = new Float32Array(100);
-  for (let i = 0; i < 100; i++) idx[i] = i;
+  const idx = new Float32Array(COUNT);
+  for (let i = 0; i < COUNT; i++) idx[i] = i;
   sprite.thinInstanceSetBuffer("instanceParticleIndex", idx, 1);
 
   // shader material
@@ -397,7 +423,7 @@ function simpleParticles(scene) {
       samplers: ["posTex"]
     }
   );
-  mat.setFloat("texSize", SIZE);
+  mat.setFloat("texSize", TEX_SIZE);
   sprite.material = mat;
 
   sprite.thinInstanceBufferUpdated("matrix");
