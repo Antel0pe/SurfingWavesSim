@@ -1,3 +1,8 @@
+const DOMAIN = {
+  minX: -5.0, maxX: 5.0,
+  minZ: -5.0, maxZ: 5.0
+};
+
 export function createScene(engine, canvas) {
     // This creates a basic Babylon Scene object (non-mesh)
     var scene = new BABYLON.Scene(engine);
@@ -34,10 +39,6 @@ camera.inertia = 0.7;         // lower = snappier stops
     light.intensity = 0.7;
 // --- 1) Domain mapping (world <-> texture) ---
 // Match the ground you plan to render. If you CreateGround({width:10,height:10}) the x/z range is [-5..+5].
-const DOMAIN = {
-  minX: -5.0, maxX: 5.0,
-  minZ: -5.0, maxZ: 5.0
-};
 
 // Your analytic parameters (same ones you currently use in the vertex shader)
 const params = {
@@ -258,12 +259,12 @@ ground.material = groundMat;
     water.material = wmat;
 
     // particles(scene);
-    simpleParticles(scene);
+    simpleParticles(scene, heightRTT);
     
 
     return scene;
 };
-function simpleParticles(scene) {
+function simpleParticles(scene, heightTex) {
   const TEX_SIZE = 32; // 10x10 grid 
     const GRID = 10;                   // 10 x 10 x 10
   const COUNT = GRID * GRID * GRID; // 1000
@@ -322,6 +323,7 @@ function simpleParticles(scene) {
         float yNorm = y / (G - 1.0);
         float yScaled = yNorm * 2.0 + 2.5;
         float x = rem - y * G;
+        x+= 10.0;
 
         // center the cube around origin; spacing = 1.0
         vec3 p = vec3(x, yScaled, z) - vec3((G - 1.0) * 0.5);
@@ -342,7 +344,7 @@ initFx.onApplyObservable.add(() => {
   fxr.render(initFx, posA);
 
     // --- Copy shader ---
-  const copyFx = new BABYLON.EffectWrapper({
+  const updateFx = new BABYLON.EffectWrapper({
     engine: scene.getEngine(),
     name: "copy",
     vertexShader: `
@@ -355,16 +357,62 @@ initFx.onApplyObservable.add(() => {
       }
     `,
     fragmentShader: `
-      precision highp float;
-      varying vec2 vUV;
-      uniform sampler2D srcTex;
-      void main() {
-        vec4 val = texture2D(srcTex, vUV);
-        gl_FragColor = vec4(val.x + 0.01, val.y, val.z, 1.0);
-      }
+precision highp float;
+varying vec2 vUV;
+
+uniform sampler2D srcTex;     // particle positions (R16/32F)
+uniform sampler2D heightTex;  // baked height, .r channel
+
+// SAME domain you used when baking the height texture
+uniform float minX, maxX, minZ, maxZ;
+
+// helper: world xz -> height UV
+vec2 xzToUV(vec2 xz) {
+  float u = (xz.x - minX) / (maxX - minX);
+  float v = (xz.y - minZ) / (maxZ - minZ);
+  return clamp(vec2(u, v), 0.0, 1.0);
+}
+
+void main() {
+  // 1) read current particle position
+  vec3 p = texture2D(srcTex, vUV).xyz;
+
+  // 2) sample height at this particle’s x,z
+  vec2 uvH = xzToUV(p.xz);
+  float h = texture2D(heightTex, uvH).r;
+
+  // 3) collision-ish rule: if particle is below surface, pop it up
+//   if (p.y < h) {
+//     // choose your policy:
+//     // (a) teleport:
+//     p.y = 10.0;
+
+//     // (b) place on surface with a small lift:
+//     // p.y = h + 0.05;
+//   } else {
+//     p.x -= 0.01;
+//     }
+
+p.x -= 0.01;
+p.y = h;
+  // 4) write new position (keep x,z unchanged, you can add your own x/z motion)
+  gl_FragColor = vec4(p, 1.0);
+}
+
     `,
-    samplerNames: ["srcTex"]
+      samplerNames: ["srcTex", "heightTex"],
+      uniformNames: ["minX","maxX","minZ","maxZ"]
   });
+    updateFx.onApply = (effect) => {
+  effect.setTexture("heightTex", heightTex);
+  effect.setFloat("minX", DOMAIN.minX);
+  effect.setFloat("maxX", DOMAIN.maxX);
+  effect.setFloat("minZ", DOMAIN.minZ);
+  effect.setFloat("maxZ", DOMAIN.maxZ);
+
+  // also bind the current read texture each frame
+  effect.setTexture("srcTex", readTex);
+};
 
   // --- Particle shaders ---
   BABYLON.Effect.ShadersStore["particlesVertexShader"] = `
@@ -436,8 +484,8 @@ initFx.onApplyObservable.add(() => {
   mat.setTexture("posTex", readTex); // initial bind
 
 scene.onBeforeRenderObservable.add(() => {
-  copyFx.onApply = (effect) => effect.setTexture("srcTex", readTex);
-  fxr.render(copyFx, writeTex);
+  updateFx.onApply = (effect) => effect.setTexture("srcTex", readTex);
+  fxr.render(updateFx, writeTex);
 });
 
 scene.onAfterRenderObservable.add(() => {
