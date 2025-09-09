@@ -66,7 +66,7 @@ const heightRTT = new BABYLON.RenderTargetTexture(
 );
 heightRTT.wrapU = heightRTT.wrapV = BABYLON.Texture.CLAMP_ADDRESSMODE;
     heightRTT.refreshRate = 1; // we'll bake once, on demand
-
+    
 // --- 3) Tiny offscreen quad + ortho camera to "draw" into the RTT ---
 const bakeQuad = BABYLON.MeshBuilder.CreatePlane("bakeQuad", { size: 2 }, scene);
     bakeQuad.position.set(0, 0, 0);
@@ -379,7 +379,7 @@ void main() {
 
   // 2) sample height at this particle’s x,z
   vec2 uvH = xzToUV(p.xz);
-  float h = texture2D(heightTex, uvH).r;
+
 
   // 3) collision-ish rule: if particle is below surface, pop it up
 //   if (p.y < h) {
@@ -484,7 +484,7 @@ p.y = h;
   mat.setTexture("posTex", readTex); // initial bind
 
 scene.onBeforeRenderObservable.add(() => {
-  updateFx.onApply = (effect) => effect.setTexture("srcTex", readTex);
+//   updateFx.onApply = (effect) => effect.setTexture("srcTex", readTex);
   fxr.render(updateFx, writeTex);
 });
 
